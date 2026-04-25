@@ -5,8 +5,8 @@ interface BrowseApiItem {
   itemId: string;
   title: string;
   price: {
-    value: string;
-    currency: string;
+    value?: string;
+    currency?: string;
   };
   image?: {
     imageUrl: string;
@@ -17,6 +17,16 @@ interface BrowseApiItem {
     username: string;
   };
   itemCreationDate?: string;
+  shippingOptions?: Array<{
+    shippingCostType?: string;
+    shippingCost?: { value: string };
+  }>;
+  // Location details from Shopping API enrichment
+  itemLocation?: {
+    city?: string;
+    country?: string;
+    state?: string;
+  };
 }
 
 interface BrowseSearchResult {
@@ -194,18 +204,40 @@ export async function fetchEbayListingsViaApi(
         try {
           const itemId = item.itemId;
           const title = item.title;
-          const price = parseFloat(item.price.value);
-          const currencyId = item.price.currency || "USD";
+          
+          // Better price handling - skip items without price
+          const priceValue = item.price?.value;
+          if (!priceValue) {
+            console.warn(`[eBay Browse API] Item ${itemId} missing price, skipping`);
+            return null;
+          }
+          
+          const price = parseFloat(priceValue);
+          if (isNaN(price) || price <= 0) {
+            console.warn(`[eBay Browse API] Item ${itemId} has invalid price: ${priceValue}, skipping`);
+            return null;
+          }
+          
+          const currencyId = item.price?.currency || "USD";
           const imageUrl = item.image?.imageUrl || "";
           const viewItemURL = item.itemWebUrl;
-          const location = country;
-          const listingType = "Buy Now"; // Browse API focuses on fixed-price items
+          const listingType = "Buy Now";
           const seller = item.seller?.username || "eBay Seller";
 
-          // Parse posting time - Browse API provides itemCreationDate
+          // Build location string from item details or fall back to country
+          let location = country;
+          if (item.itemLocation) {
+            const parts = [];
+            if (item.itemLocation.city) parts.push(item.itemLocation.city);
+            if (item.itemLocation.state) parts.push(item.itemLocation.state);
+            if (item.itemLocation.country) parts.push(item.itemLocation.country);
+            location = parts.length > 0 ? parts.join(", ") : country;
+          }
+
+          // Parse posting time
           const postedTime = item.itemCreationDate || new Date().toISOString();
 
-          if (!itemId || !title || !viewItemURL || price === 0) {
+          if (!itemId || !title || !viewItemURL) {
             return null;
           }
 
