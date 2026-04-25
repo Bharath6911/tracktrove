@@ -1,5 +1,28 @@
-// eBay API Service - Using Environment Variables for Credentials
+// eBay API Service - Using OAuth 2.0 with Browse API
 // See .env.local for configuration
+
+interface BrowseApiItem {
+  itemId: string;
+  title: string;
+  price: {
+    value: string;
+    currency: string;
+  };
+  image?: {
+    imageUrl: string;
+  };
+  itemWebUrl: string;
+  condition: string;
+  seller?: {
+    username: string;
+  };
+  itemCreationDate?: string;
+}
+
+interface BrowseSearchResult {
+  itemSummaries?: BrowseApiItem[];
+  total?: number;
+}
 
 interface EbayApiItem {
   itemId: string;
@@ -14,47 +37,21 @@ interface EbayApiItem {
   seller?: string;
 }
 
+// Cache for access tokens to avoid repeated API calls
+let cachedAccessToken: { token: string; expiresAt: number } | null = null;
+
 interface AccessTokenResponse {
   access_token: string;
   expires_in: number;
   token_type: string;
 }
 
-interface EbaySearchResult {
-  item: Array<{
-    itemId: string[];
-    title: string[];
-    globalId: string[];
-    primaryCategory: Array<{ categoryId: string[]; categoryName: string[] }>;
-    galleryURL: string[];
-    viewItemURL: string[];
-    autoPay: boolean[];
-    location: string[];
-    country: string[];
-    sellingStatus: Array<{ currentPrice: Array<{ __value__: string; currencyId: string }> }>;
-    condition: Array<{ conditionId: string[]; conditionDisplayName: string[] }>;
-    isMultiVariationListing: boolean[];
-    topRatedListing: boolean[];
-  }>;
-  paginationOutput: Array<{
-    pageNumber: string[];
-    entriesPerPage: string[];
-    totalPages: string[];
-    totalEntries: string[];
-  }>;
-}
-
-// Cache for access tokens to avoid repeated API calls
-let cachedAccessToken: { token: string; expiresAt: number } | null = null;
-
 // Load credentials from environment variables
 function getEbayCredentials() {
   const appId = process.env.EBAY_APP_ID;
-  const devId = process.env.EBAY_DEV_ID;
   const certId = process.env.EBAY_CERT_ID;
 
   console.log("[eBay Creds] APP_ID exists:", !!appId, "first 10 chars:", appId?.substring(0, 10));
-  console.log("[eBay Creds] DEV_ID exists:", !!devId);
   console.log("[eBay Creds] CERT_ID exists:", !!certId, "first 10 chars:", certId?.substring(0, 10));
 
   if (!appId || !certId) {
@@ -63,22 +60,25 @@ function getEbayCredentials() {
     );
   }
 
-  return { appId, devId, certId };
+  return { appId, certId };
 }
 
 const EBAY_AUTH_URL = "https://api.ebay.com/identity/v1/oauth2/token";
-const EBAY_SEARCH_URL = "https://svcs.ebay.com/services/search/FindingService/v1";
+const EBAY_BROWSE_API_URL = "https://api.ebay.com/buy/browse/v1/item_summary/search";
 
 // Get OAuth access token for eBay API
 async function getAccessToken(): Promise<string> {
   // Return cached token if still valid
   if (cachedAccessToken && cachedAccessToken.expiresAt > Date.now()) {
+    console.log("[eBay Auth] Using cached token");
     return cachedAccessToken.token;
   }
 
   try {
     const { appId, certId } = getEbayCredentials();
     const credentials = Buffer.from(`${appId}:${certId}`).toString("base64");
+
+    console.log("[eBay Auth] Requesting new OAuth token...");
 
     const response = await fetch(EBAY_AUTH_URL, {
       method: "POST",
@@ -90,7 +90,8 @@ async function getAccessToken(): Promise<string> {
     });
 
     if (!response.ok) {
-      console.error(`[eBay Auth] Failed to get access token: ${response.statusText}`);
+      const text = await response.text();
+      console.error(`[eBay Auth] Failed to get access token: ${response.statusText} - ${text.substring(0, 200)}`);
       return "";
     }
 
@@ -102,7 +103,7 @@ async function getAccessToken(): Promise<string> {
       expiresAt: Date.now() + data.expires_in * 1000 - 60000, // Refresh 1 min before expiry
     };
 
-    console.log("[eBay Auth] Successfully obtained access token");
+    console.log("[eBay Auth] Successfully obtained new access token (expires in", data.expires_in, "seconds)");
     return data.access_token;
   } catch (error) {
     console.error("[eBay Auth] Error getting access token:", error);
@@ -110,142 +111,99 @@ async function getAccessToken(): Promise<string> {
   }
 }
 
-// Map country names to eBay global IDs
-function getEbayGlobalId(country: string): string {
-  const globalIdMap: Record<string, string> = {
-    USA: "EBAY-US",
-    UK: "EBAY-GB",
-    Canada: "EBAY-CA",
-    Australia: "EBAY-AU",
-    Germany: "EBAY-DE",
-    France: "EBAY-FR",
-    India: "EBAY-IN",
+// Map country names to eBay market IDs
+function getEbayMarketId(country: string): string {
+  const marketIdMap: Record<string, string> = {
+    USA: "EBAY_US",
+    UK: "EBAY_GB",
+    Canada: "EBAY_CA",
+    Australia: "EBAY_AU",
+    Germany: "EBAY_DE",
+    France: "EBAY_FR",
+    India: "EBAY_IN",
   };
-  return globalIdMap[country] || "EBAY-US";
+  return marketIdMap[country] || "EBAY_US";
 }
 
-// Map sort parameter to eBay sortOrder values
-function mapSortToEbaySortOrder(sort: string): string {
-  const sortMap: Record<string, string> = {
-    newlyListed: "EndTimeSoonest", // Most recently listed
-    "12h": "EndTimeSoonest", // Default, ends soonest
-    ending: "EndTimeSoonest", // Ending soon
-    price: "PricePlusShippingLowest", // Price: lowest first
-    priceDrop: "PricePlusShippingLowest", // Price lowest
-  };
-  return sortMap[sort] || "EndTimeSoonest";
-}
-
-// Fetch listings from eBay API (REST API - FindingService)
+// Fetch listings from eBay Browse API
 export async function fetchEbayListingsViaApi(
   searchTerm: string,
   country: string = "USA",
   sort: string = "12h"
 ): Promise<EbayApiItem[]> {
   try {
-    const { appId } = getEbayCredentials();
+    console.log(`[eBay Browse API] Searching for "${searchTerm}" in ${country} (sort: ${sort})`);
 
-    console.log(`[eBay API] Searching for "${searchTerm}" in ${country} (sort: ${sort})`);
+    // Get OAuth token
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      console.error("[eBay Browse API] Failed to get access token");
+      return [];
+    }
 
-    const globalId = getEbayGlobalId(country);
-    const sortOrder = mapSortToEbaySortOrder(sort);
+    const marketId = getEbayMarketId(country);
 
-    // eBay Finding Service parameters
-    const params = new URLSearchParams({
-      "OPERATION-NAME": "findItemsAdvanced",
-      "SERVICE-VERSION": "1.0.0",
-      SECURITY_APPNAME: appId,
-      "GLOBAL-ID": globalId,
-      keywords: searchTerm,
-      "sortOrder": sortOrder,
-      "paginationInput.entriesPerPage": "100",
-      "outputSelector": "SellerInfo,GalleryInfo",
-      "itemFilter(0).name": "ListingType",
-      "itemFilter(0).value": "All", // Include both auctions and fixed-price
-      "itemFilter(1).name": "Condition",
-      "itemFilter(1).value": "All",
-      "itemFilter(2).name": "HideDuplicateItems",
-      "itemFilter(2).value": "true",
-      "responseFormat": "JSON",
-    });
+    // Map sort parameter
+    const sortMap: Record<string, string> = {
+      newlyListed: "NEWLY_LISTED",
+      "12h": "ENDING_SOON",
+      ending: "ENDING_SOON",
+      price: "PRICE_LOWEST_FIRST",
+      priceDrop: "PRICE_LOWEST_FIRST",
+    };
+    const sortOrder = sortMap[sort] || "ENDING_SOON";
 
-    const url = `${EBAY_SEARCH_URL}?${params.toString()}`;
-    console.log(`[eBay API] Request URL (first 100 chars): ${url.substring(0, 100)}...`);
+    // Build Browse API search URL
+    const url = new URL(EBAY_BROWSE_API_URL);
+    url.searchParams.append("q", searchTerm);
+    url.searchParams.append("sort", sortOrder);
+    url.searchParams.append("market_id", marketId);
+    url.searchParams.append("limit", "50");
 
-    const response = await fetch(url, {
+    console.log(`[eBay Browse API] Request: ${url.toString().substring(0, 150)}...`);
+
+    const response = await fetch(url.toString(), {
       method: "GET",
       headers: {
+        Authorization: `Bearer ${accessToken}`,
         "Accept": "application/json",
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "X-EBAY-C-MARKETPLACE-ID": marketId,
       },
     });
-    
-    console.log(`[eBay API] Response status: ${response.status}`);
+
+    console.log(`[eBay Browse API] Response status: ${response.status}`);
 
     if (!response.ok) {
       const text = await response.text();
-      console.error(`[eBay API] Search failed: ${response.statusText} - ${text.substring(0, 200)}`);
+      console.error(`[eBay Browse API] Search failed: ${response.statusText} - ${text.substring(0, 200)}`);
       return [];
     }
 
-    const data = (await response.json()) as {
-      findItemsAdvancedResponse?: Array<{
-        ack?: string[];
-        errorMessage?: Array<{ error?: Array<{ message?: string[] }> }>;
-        searchResult?: Array<EbaySearchResult>;
-      }>;
-    };
+    const data = (await response.json()) as BrowseSearchResult;
 
-    // Parse response
-    const responseObj = data.findItemsAdvancedResponse?.[0];
-    if (!responseObj) {
-      console.warn("[eBay API] Invalid response structure");
-      console.log("[eBay API] Full response:", JSON.stringify(data).substring(0, 300));
+    if (!data.itemSummaries || data.itemSummaries.length === 0) {
+      console.log("[eBay Browse API] No items found");
       return [];
     }
 
-    // Check for errors
-    if (responseObj.ack && responseObj.ack[0] !== "Success") {
-      const errorMsg =
-        responseObj.errorMessage?.[0]?.error?.[0]?.message?.[0] || "Unknown error";
-      console.error(`[eBay API] Error: ${errorMsg}`);
-      console.log("[eBay API] Full response:", JSON.stringify(responseObj).substring(0, 300));
-      return [];
-    }
+    console.log(`[eBay Browse API] Found ${data.itemSummaries.length} items`);
 
-    const searchResult = responseObj.searchResult?.[0];
-    if (!searchResult || !searchResult.item) {
-      console.log("[eBay API] No items found");
-      console.log("[eBay API] searchResult:", searchResult);
-      return [];
-    }
-
-    // Transform eBay items to our format
-    const items: EbayApiItem[] = searchResult.item
+    // Transform Browse API items to our format
+    const items: EbayApiItem[] = data.itemSummaries
       .map((item) => {
         try {
-          const itemId = item.itemId?.[0];
-          const title = item.title?.[0];
-          const price = parseFloat(item.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ || "0");
-          const currencyId = item.sellingStatus?.[0]?.currentPrice?.[0]?.currencyId || "USD";
-          const viewItemURL = item.viewItemURL?.[0];
-          const location = item.location?.[0] || item.country?.[0] || country;
-          const imageUrl = item.galleryURL?.[0] || "";
+          const itemId = item.itemId;
+          const title = item.title;
+          const price = parseFloat(item.price.value);
+          const currencyId = item.price.currency || "USD";
+          const imageUrl = item.image?.imageUrl || "";
+          const viewItemURL = item.itemWebUrl;
+          const location = country;
+          const listingType = "Buy Now"; // Browse API focuses on fixed-price items
+          const seller = item.seller?.username || "eBay Seller";
 
-          // Determine listing type
-          const listingType =
-            item.condition?.[0]?.conditionDisplayName?.[0]?.toLowerCase().includes("auction") ||
-            item.isMultiVariationListing?.[0]
-              ? "Auction"
-              : "Buy Now";
-
-          // Extract seller name from eBay listing URL if available
-          const seller = "eBay Seller";
-
-          // Posted time - eBay API doesn't provide this directly, so we estimate
-          // Based on item ID (items are often ordered by listing time)
-          const postedTime = new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000).toISOString();
+          // Parse posting time - Browse API provides itemCreationDate
+          const postedTime = item.itemCreationDate || new Date().toISOString();
 
           if (!itemId || !title || !viewItemURL || price === 0) {
             return null;
@@ -264,17 +222,17 @@ export async function fetchEbayListingsViaApi(
             seller,
           } as EbayApiItem;
         } catch (err) {
-          console.error("[eBay API] Error parsing item:", err);
+          console.error("[eBay Browse API] Error parsing item:", err);
           return null;
         }
       })
       .filter((item): item is EbayApiItem => item !== null)
-      .slice(0, 50); // Return top 50 items
+      .slice(0, 50);
 
-    console.log(`[eBay API] Successfully retrieved ${items.length} listings`);
+    console.log(`[eBay Browse API] Successfully retrieved ${items.length} listings`);
     return items;
   } catch (error) {
-    console.error("[eBay API] Error:", error instanceof Error ? error.message : error);
+    console.error("[eBay Browse API] Error:", error instanceof Error ? error.message : error);
     return [];
   }
 }
@@ -282,19 +240,19 @@ export async function fetchEbayListingsViaApi(
 // Verify eBay API connection
 export async function verifyEbayApiConnection(): Promise<boolean> {
   try {
-    console.log("[eBay API] Verifying connection...");
+    console.log("[eBay Browse API] Verifying connection...");
     const result = await fetchEbayListingsViaApi("test", "USA", "12h");
     const isConnected = result.length > 0;
 
     if (isConnected) {
-      console.log("[eBay API] ✓ Connection verified - API is working");
+      console.log("[eBay Browse API] ✓ Connection verified - API is working");
     } else {
-      console.log("[eBay API] ⚠ Connection test returned no results");
+      console.log("[eBay Browse API] ⚠ Connection test returned no results");
     }
 
     return isConnected;
   } catch (error) {
-    console.error("[eBay API] ✗ Connection verification failed:", error);
+    console.error("[eBay Browse API] ✗ Connection verification failed:", error);
     return false;
   }
 }

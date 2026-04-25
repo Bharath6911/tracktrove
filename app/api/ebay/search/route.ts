@@ -1,7 +1,7 @@
 import { fetchEbayListingsViaApi } from "@/lib/ebay-api-service";
 
-// eBay API endpoint
-// Fetches real listings from eBay using official Finding Service API
+// eBay Browse API endpoint
+// Fetches real listings from eBay using OAuth 2.0 Browse API
 
 interface EbayItem {
   itemId: string;
@@ -32,19 +32,19 @@ export async function GET(request: Request) {
   }
 
   try {
-    console.log(`[API] Search request: q="${query}", country="${country}", sort="${sortBy}"`);
+    console.log(`[Browse API Search] q="${query}", country="${country}", sort="${sortBy}"`);
     
-    // Use official eBay Finding Service API
+    // Use official eBay Browse API with OAuth 2.0
     const items = await fetchEbayListingsViaApi(query, country, sortBy);
     
-    console.log(`[API] Got ${items.length} items from eBay API`);
+    console.log(`[Browse API Search] Got ${items.length} items`);
 
     return Response.json({
       items,
       total: items.length,
     } as EbaySearchResponse);
   } catch (error) {
-    console.error("eBay API error:", error);
+    console.error("eBay Browse API error:", error);
     return Response.json(
       { error: "Failed to fetch eBay listings", details: String(error) },
       { status: 500 }
