@@ -1,7 +1,7 @@
-import { scrapeEbayListings } from "@/lib/scrapers/ebay-scraper";
+import { fetchEbayListingsViaApi } from "@/lib/ebay-api-service";
 
-// eBay web scraping endpoint
-// Scrapes real listings from eBay based on search term
+// eBay API endpoint
+// Fetches real listings from eBay using official Finding Service API
 
 interface EbayItem {
   itemId: string;
@@ -32,15 +32,15 @@ export async function GET(request: Request) {
   }
 
   try {
-    // Use web scraper instead of API
-    const items = await scrapeEbayListings(query, sortBy, country);
+    // Use official eBay Finding Service API
+    const items = await fetchEbayListingsViaApi(query, country, sortBy);
 
     return Response.json({
       items,
       total: items.length,
     } as EbaySearchResponse);
   } catch (error) {
-    console.error("eBay scraping error:", error);
+    console.error("eBay API error:", error);
     return Response.json(
       { error: "Failed to fetch eBay listings", details: String(error) },
       { status: 500 }
