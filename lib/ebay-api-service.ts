@@ -53,9 +53,13 @@ function getEbayCredentials() {
   const devId = process.env.EBAY_DEV_ID;
   const certId = process.env.EBAY_CERT_ID;
 
+  console.log("[eBay Creds] APP_ID exists:", !!appId, "first 10 chars:", appId?.substring(0, 10));
+  console.log("[eBay Creds] DEV_ID exists:", !!devId);
+  console.log("[eBay Creds] CERT_ID exists:", !!certId, "first 10 chars:", certId?.substring(0, 10));
+
   if (!appId || !certId) {
     throw new Error(
-      "Missing eBay credentials. Please set EBAY_APP_ID and EBAY_CERT_ID environment variables."
+      `Missing eBay credentials. APP_ID=${!!appId}, CERT_ID=${!!certId}`
     );
   }
 

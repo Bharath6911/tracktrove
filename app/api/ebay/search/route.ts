@@ -32,8 +32,12 @@ export async function GET(request: Request) {
   }
 
   try {
+    console.log(`[API] Search request: q="${query}", country="${country}", sort="${sortBy}"`);
+    
     // Use official eBay Finding Service API
     const items = await fetchEbayListingsViaApi(query, country, sortBy);
+    
+    console.log(`[API] Got ${items.length} items from eBay API`);
 
     return Response.json({
       items,
