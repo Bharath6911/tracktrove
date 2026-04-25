@@ -170,6 +170,7 @@ export async function fetchEbayListingsViaApi(
     });
 
     const url = `${EBAY_SEARCH_URL}?${params.toString()}`;
+    console.log(`[eBay API] Request URL (first 100 chars): ${url.substring(0, 100)}...`);
 
     const response = await fetch(url, {
       method: "GET",
@@ -179,9 +180,12 @@ export async function fetchEbayListingsViaApi(
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       },
     });
+    
+    console.log(`[eBay API] Response status: ${response.status}`);
 
     if (!response.ok) {
-      console.error(`[eBay API] Search failed: ${response.statusText}`);
+      const text = await response.text();
+      console.error(`[eBay API] Search failed: ${response.statusText} - ${text.substring(0, 200)}`);
       return [];
     }
 
@@ -197,6 +201,7 @@ export async function fetchEbayListingsViaApi(
     const responseObj = data.findItemsAdvancedResponse?.[0];
     if (!responseObj) {
       console.warn("[eBay API] Invalid response structure");
+      console.log("[eBay API] Full response:", JSON.stringify(data).substring(0, 300));
       return [];
     }
 
@@ -205,12 +210,14 @@ export async function fetchEbayListingsViaApi(
       const errorMsg =
         responseObj.errorMessage?.[0]?.error?.[0]?.message?.[0] || "Unknown error";
       console.error(`[eBay API] Error: ${errorMsg}`);
+      console.log("[eBay API] Full response:", JSON.stringify(responseObj).substring(0, 300));
       return [];
     }
 
     const searchResult = responseObj.searchResult?.[0];
     if (!searchResult || !searchResult.item) {
       console.log("[eBay API] No items found");
+      console.log("[eBay API] searchResult:", searchResult);
       return [];
     }
 
