@@ -47,12 +47,15 @@ export async function POST(request: NextRequest) {
     const body = await request.json() as ChallengeResponse | EventNotification;
 
     // Check if this is a challenge verification request
-    if ("challengeResponse" in body && body.challengeResponse) {
+    // eBay might send it as either "challengeResponse" or "challenge"
+    const challengeValue = (body as any).challenge || (body as any).challengeResponse;
+    
+    if (challengeValue) {
       console.log("[eBay Notifications] Challenge verification request detected");
       // eBay sends a challenge, we need to echo it back
       return NextResponse.json(
         {
-          challengeResponse: body.challengeResponse,
+          challengeResponse: challengeValue,
         },
         { status: 200 }
       );
