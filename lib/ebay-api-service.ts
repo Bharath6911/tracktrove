@@ -136,6 +136,20 @@ function getEbayMarketId(country: string): string {
   return marketIdMap[country] || "EBAY_US";
 }
 
+// Map country names to eBay itemLocationCountry filter codes
+function getItemLocationCountryCode(country: string): string {
+  const locationMap: Record<string, string> = {
+    USA: "US",
+    UK: "GB",
+    Canada: "CA",
+    Australia: "AU",
+    Germany: "DE",
+    France: "FR",
+    India: "IN",
+  };
+  return locationMap[country] || "US";
+}
+
 // Fetch listings from eBay Browse API
 export async function fetchEbayListingsViaApi(
   searchTerm: string,
@@ -153,6 +167,7 @@ export async function fetchEbayListingsViaApi(
     }
 
     const marketId = getEbayMarketId(country);
+    const locationCountryCode = getItemLocationCountryCode(country);
 
     // Map sort parameter
     const sortMap: Record<string, string> = {
@@ -169,9 +184,12 @@ export async function fetchEbayListingsViaApi(
     url.searchParams.append("q", searchTerm);
     url.searchParams.append("sort", sortOrder);
     url.searchParams.append("market_id", marketId);
-    url.searchParams.append("limit", "50");
+    url.searchParams.append("limit", "100"); // Get more results, we'll filter client-side
+    
+    // Try filter with delivery country - items available for delivery to this country
+    url.searchParams.append("filter", `deliveryCountry:{${locationCountryCode}}`);
 
-    console.log(`[eBay Browse API] Request: ${url.toString().substring(0, 150)}...`);
+    console.log(`[eBay Browse API] Searching "${searchTerm}" in ${country} (filter: deliveryCountry:{${locationCountryCode}})`);
 
     const response = await fetch(url.toString(), {
       method: "GET",
@@ -183,6 +201,7 @@ export async function fetchEbayListingsViaApi(
     });
 
     console.log(`[eBay Browse API] Response status: ${response.status}`);
+    console.log(`[eBay Browse API] Full URL: ${url.toString()}`);
 
     if (!response.ok) {
       const text = await response.text();
@@ -197,7 +216,12 @@ export async function fetchEbayListingsViaApi(
       return [];
     }
 
-    console.log(`[eBay Browse API] Found ${data.itemSummaries.length} items`);
+    console.log(`[eBay Browse API] Found ${data.itemSummaries.length} items before filtering`);
+    
+    // Log first few items to see their locations
+    data.itemSummaries.slice(0, 3).forEach((item, idx) => {
+      console.log(`[eBay Browse API] Item ${idx + 1} location:`, item.itemLocation);
+    });
 
     // Transform Browse API items to our format
     const items: EbayApiItem[] = data.itemSummaries
@@ -227,12 +251,41 @@ export async function fetchEbayListingsViaApi(
 
           // Build location string from item details or fall back to country
           let location = country;
+          let itemCountry = country;
+          
           if (item.itemLocation) {
             const parts = [];
             if (item.itemLocation.city) parts.push(item.itemLocation.city);
             if (item.itemLocation.state) parts.push(item.itemLocation.state);
-            if (item.itemLocation.country) parts.push(item.itemLocation.country);
+            if (item.itemLocation.country) {
+              parts.push(item.itemLocation.country);
+              // Extract country code from full name for filtering
+              itemCountry = item.itemLocation.country;
+            }
             location = parts.length > 0 ? parts.join(", ") : country;
+            console.log(`[eBay Browse API] Item ${itemId} - Location: "${location}", Country: "${itemCountry}"`);
+          }
+
+          // CLIENT-SIDE FILTER: Only include items from the selected country
+          // Map country names to check against
+          const countryCheckMap: Record<string, string[]> = {
+            USA: ["United States", "US", "USA"],
+            UK: ["United Kingdom", "GB", "UK"],
+            Australia: ["Australia", "AU"],
+            Canada: ["Canada", "CA"],
+            Germany: ["Germany", "DE"],
+            France: ["France", "FR"],
+            India: ["India", "IN"],
+          };
+
+          const acceptedCountries = countryCheckMap[country] || [country];
+          const isCorrectCountry = acceptedCountries.some(
+            (c) => itemCountry.includes(c) || location.includes(c)
+          );
+
+          if (!isCorrectCountry) {
+            console.log(`[eBay Browse API] Item ${itemId} filtered out - not from ${country}`);
+            return null;
           }
 
           // Parse posting time
@@ -262,7 +315,7 @@ export async function fetchEbayListingsViaApi(
       .filter((item): item is EbayApiItem => item !== null)
       .slice(0, 50);
 
-    console.log(`[eBay Browse API] Successfully retrieved ${items.length} listings`);
+    console.log(`[eBay Browse API] After country filter: ${items.length} items`);
     return items;
   } catch (error) {
     console.error("[eBay Browse API] Error:", error instanceof Error ? error.message : error);

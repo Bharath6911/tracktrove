@@ -33,7 +33,9 @@ export async function fetchEbayListings(
 
     // Transform eBay data to our Listing type
     const listings: Listing[] = (data.items || []).map((item: EbayItem, index: number) => ({
-      id: item.itemId || `ebay-${bookmarkId}-${index}`,
+      // Make ID unique by combining bookmarkId + itemId to avoid React key conflicts
+      // when same item appears in multiple searches
+      id: `${bookmarkId}-${item.itemId || `item-${index}`}`,
       bookmarkId,
       marketplace,
       title: item.title,

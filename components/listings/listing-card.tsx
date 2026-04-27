@@ -23,8 +23,11 @@ export function ListingCard({ listing, detailHref }: ListingCardProps) {
           </span>
         </div>
 
-        {/* Location - City and Country only */}
-        <p className="text-xs text-slate-300 font-medium">{listing.location}</p>
+        {/* Location - Prominent Display */}
+        <div className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-md bg-amber-500/15 text-amber-200 w-fit">
+          <span>📍</span>
+          <span>{listing.location}</span>
+        </div>
 
         {/* Title */}
         <h3 className="line-clamp-2 text-sm font-semibold text-white">{listing.title}</h3>
