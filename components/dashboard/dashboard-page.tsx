@@ -304,6 +304,11 @@ export function DashboardPage() {
                       >
                         {listings
                           .sort((a, b) => new Date(b.postedAtIso).getTime() - new Date(a.postedAtIso).getTime())
+                          // Deduplicate listings by ID to prevent duplicate key warnings
+                          .reduce((unique: typeof listings, listing) => {
+                            const isDuplicate = unique.some(item => item.id === listing.id);
+                            return isDuplicate ? unique : [...unique, listing];
+                          }, [])
                           .map((listing) => {
                           return (
                           <a

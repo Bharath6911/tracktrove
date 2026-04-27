@@ -32,7 +32,7 @@ export async function fetchEbayListings(
     const data = await response.json();
 
     // Transform eBay data to our Listing type
-    const listings: Listing[] = (data.items || []).map((item: EbayItem, index: number) => ({
+    const allListings: Listing[] = (data.items || []).map((item: EbayItem, index: number) => ({
       // Make ID unique by combining bookmarkId + itemId to avoid React key conflicts
       // when same item appears in multiple searches
       id: `${bookmarkId}-${item.itemId || `item-${index}`}`,
@@ -49,7 +49,20 @@ export async function fetchEbayListings(
       sellerName: item.seller || "",
       sellerUrl: "",
       currency: item.currencyId || "USD",
-    }))
+    }));
+
+    // Deduplicate by itemId (not by full ID, in case same item appears multiple times)
+    const seenItemIds = new Set<string>();
+    const listings: Listing[] = allListings
+      .filter((listing) => {
+        const itemId = listing.id.split("-").slice(1).join("-"); // Extract itemId from composite ID
+        if (seenItemIds.has(itemId)) {
+          console.log(`[eBay Service] Filtering duplicate itemId: ${itemId}`);
+          return false;
+        }
+        seenItemIds.add(itemId);
+        return true;
+      })
       // Sort by posting time - newest first
       .sort((a: Listing, b: Listing) => {
         const timeA = new Date(a.postedAtIso).getTime();
@@ -57,6 +70,7 @@ export async function fetchEbayListings(
         return timeB - timeA; // Latest first
       });
 
+    console.log(`[eBay Service] Returned ${listings.length} unique listings (filtered ${allListings.length - listings.length} duplicates)`);
     return listings;
   } catch (error) {
     console.error("Error fetching eBay listings:", error);
