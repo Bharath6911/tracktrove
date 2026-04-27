@@ -75,6 +75,7 @@ function getEbayCredentials() {
 
 const EBAY_AUTH_URL = "https://api.ebay.com/identity/v1/oauth2/token";
 const EBAY_BROWSE_API_URL = "https://api.ebay.com/buy/browse/v1/item_summary/search";
+const EBAY_SHOPPING_API_URL = "https://open.api.ebay.com/shopping";
 
 // Get OAuth access token for eBay API
 async function getAccessToken(): Promise<string> {
